@@ -2,16 +2,20 @@ from flask import Flask, request, render_template_string
 import requests
 from dotenv import load_dotenv
 import os
+from datetime import datetime, timedelta
 
 load_dotenv()
 
 app = Flask(__name__)
 
-# === STEP 1: PASTE YOUR GROQ API KEY HERE ===
-# Go to: https://console.groq.com → API Keys → Create New → Copy
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "gsk_placeholder_for_testing")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+if not GROQ_API_KEY:
+    raise ValueError("GROQ_API_KEY not found in .env")
 
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+
+# Usage tracking (per IP, resets daily)
+USAGE = {}
 
 def generate_post(idea, tone="professional"):
     prompt = f"""
@@ -30,7 +34,7 @@ def generate_post(idea, tone="professional"):
     }
     
     data = {
-        "model": "llama-3.1-8b-instant",  # Free, fast, & updated (replacement for deprecated model)
+        "model": "llama-3.1-8b-instant",
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": 300,
         "temperature": 0.7
@@ -49,15 +53,30 @@ def generate_post(idea, tone="professional"):
 def home():
     post = None
     error = None
+    ip = request.remote_addr
+
+    if ip not in USAGE:
+        USAGE[ip] = {"count": 0, "reset": datetime.now()}
+
+    if datetime.now() - USAGE[ip]["reset"] > timedelta(days=1):
+        USAGE[ip] = {"count": 0, "reset": datetime.now()}
 
     if request.method == 'POST':
+        password = request.form.get('password', '')
         idea = request.form['idea'].strip()
         tone = request.form['tone']
 
         if not idea:
             error = "Please enter an idea."
         else:
-            post = generate_post(idea, tone)
+            if USAGE[ip]["count"] >= 3 and password != "pro2025":
+                error = "Upgrade to Pro: https://gumroad.com/l/linkedinai"
+            else:
+                post = generate_post(idea, tone)
+                if USAGE[ip]["count"] < 3:
+                    USAGE[ip]["count"] += 1
+
+    remaining = max(0, 3 - USAGE[ip]["count"])
 
     # === HTML PAGE (Beautiful & Mobile-Friendly) ===
     html = '''
@@ -79,6 +98,8 @@ def home():
             button:hover { background: #005a8c; }
             .result { margin-top: 25px; padding: 20px; background: #f0f7ff; border-left: 5px solid #0077b5; border-radius: 8px; white-space: pre-wrap; font-size: 16px; line-height: 1.6; }
             .error { color: #d32f2f; text-align: center; font-weight: 600; }
+            .free { text-align: center; color: #d32f2f; font-weight: 600; }
+            .pro { background: #fff8e1; padding: 15px; border-radius: 8px; text-align: center; margin-top: 20px; }
             footer { text-align: center; margin-top: 40px; color: #888; font-size: 14px; }
         </style>
     </head>
@@ -86,6 +107,7 @@ def home():
         <div class="container">
             <h1>LinkedIn AI Post Generator</h1>
             <p>Turn any idea into a viral LinkedIn post in seconds.</p>
+            <p class="free">You have {{ remaining }} free post(s) left</p>
 
             <form method="POST">
                 <input type="text" name="idea" placeholder="Your idea (e.g. I launched a SaaS)" required>
@@ -95,6 +117,10 @@ def home():
                     <option value="bold">Bold</option>
                     <option value="humble">Humble</option>
                 </select>
+                {% if remaining == 0 %}
+                <input type="password" name="password" placeholder="Pro Password" required>
+                <div class="pro"><strong>Pro:</strong> Unlimited posts • $29/mo</div>
+                {% endif %}
                 <button type="submit">Generate Post</button>
             </form>
 
@@ -116,7 +142,7 @@ def home():
     </body>
     </html>
     '''
-    return render_template_string(html, post=post, error=error)
+    return render_template_string(html, post=post, error=error, remaining=remaining)
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080, debug=True)
