@@ -1,8 +1,9 @@
 from flask import Flask, request, render_template_string
 import requests
-import dotenv
+from dotenv import load_dotenv
 import os
-dotenv.load_dotenv()
+
+load_dotenv()
 
 app = Flask(__name__)
 
